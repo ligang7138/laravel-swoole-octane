@@ -1,0 +1,205 @@
+version: '3.8'
+
+services:
+  # PHP Swoole 应用
+  sxw-app:
+    build:
+      context: .
+      dockerfile: docker/swoole/Dockerfile
+    container_name: sxw-app
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html:rw
+    ports:
+      - "8000:8000"
+    depends_on:
+      - sxw-mysql
+      - sxw-pgsql
+      - sxw-redis
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - DB_HOST=sxw-mysql
+      - DB_PORT=3306
+      - DB_DATABASE=sxw
+      - DB_USERNAME=sxw
+      - DB_PASSWORD=sxw123
+      - PGSQL_HOST=sxw-pgsql
+      - PGSQL_PORT=5432
+      - PGSQL_DATABASE=sxw_analytics
+      - PGSQL_USERNAME=sxw
+      - PGSQL_PASSWORD=sxw123
+      - REDIS_HOST=sxw-redis
+      - REDIS_PORT=6379
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # Nginx 反向代理
+  sxw-nginx:
+    image: openresty/openresty:alpine
+    container_name: sxw-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./docker/nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - ./:/var/www/html:ro
+    depends_on:
+      - sxw-app
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # MySQL 8.4
+  sxw-mysql:
+    image: mysql:8.4
+    container_name: sxw-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: sxw
+      MYSQL_USER: sxw
+      MYSQL_PASSWORD: sxw123
+    volumes:
+      - sxw-mysql-data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    command: >
+      --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --innodb-buffer-pool-size=512M
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # PostgreSQL 17
+  sxw-pgsql:
+    image: postgres:17-alpine
+    container_name: sxw-pgsql
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: sxw_analytics
+      POSTGRES_USER: sxw
+      POSTGRES_PASSWORD: sxw123
+    volumes:
+      - sxw-pgsql-data:/var/lib/postgresql/data
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # Redis 7.4
+  sxw-redis:
+    image: redis:7.4-alpine
+    container_name: sxw-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass sxw123 --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - sxw-redis-data:/data
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # RocketMQ NameServer
+  sxw-rocketmq-namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: sxw-rocketmq-namesrv
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx256m"
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # RocketMQ Broker
+  sxw-rocketmq-broker:
+    image: apache/rocketmq:5.3.1
+    container_name: sxw-rocketmq-broker
+    ports:
+      - "10911:10911"
+      - "10909:10909"
+    depends_on:
+      - sxw-rocketmq-namesrv
+    command: sh mqbroker -n sxw-rocketmq-namesrv:9876 -c /home/rocketmq/rocketmq-5.3.1/conf/broker.conf
+    environment:
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m"
+    volumes:
+      - ./docker/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.3.1/conf/broker.conf:ro
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # RocketMQ Dashboard
+  sxw-rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: sxw-rocketmq-dashboard
+    ports:
+      - "8180:8080"
+    depends_on:
+      - sxw-rocketmq-namesrv
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=sxw-rocketmq-namesrv:9876"
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # Kafka + Zookeeper
+  sxw-zookeeper:
+    image: confluentinc/cp-zookeeper:7.9.0
+    container_name: sxw-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - sxw-zookeeper-data:/var/lib/zookeeper/data
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  sxw-kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: sxw-kafka
+    ports:
+      - "9092:9092"
+    depends_on:
+      - sxw-zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: sxw-zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://sxw-kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - sxw-kafka-data:/var/lib/kafka/data
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+  # Kafka UI
+  sxw-kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: sxw-kafka-ui
+    ports:
+      - "8280:8080"
+    depends_on:
+      - sxw-kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: sxw-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: sxw-kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: sxw-zookeeper:2181
+    networks:
+      - sxw-net
+    restart: unless-stopped
+
+networks:
+  sxw-net:
+    driver: bridge
+
+volumes:
+  sxw-mysql-data:
+  sxw-pgsql-data:
+  sxw-redis-data:
+  sxw-zookeeper-data:
+  sxw-kafka-data:
