@@ -6,10 +6,20 @@
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {
-        "php": "^8.2",
+        "php": "^8.4",
         "laravel/framework": "^12.0",
         "laravel/octane": "^2.17",
-        "laravel/tinker": "^2.10.1"
+        "laravel/tinker": "^2.10.1",
+        "laravel/sanctum": "^4.0",
+        "tymon/jwt-auth": "^2.0",
+        "spatie/laravel-permission": "^6.0",
+        "maatwebsite/excel": "^3.1",
+        "intervention/image": "^3.0",
+        "league/flysystem-aws-s3-v3": "^3.0",
+        "predis/predis": "^2.0",
+        "guzzlehttp/guzzle": "^7.8",
+        "ramsey/uuid": "^4.7",
+        "doctrine/dbal": "^3.8"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
